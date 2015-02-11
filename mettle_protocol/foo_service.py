@@ -27,7 +27,8 @@ class Pipeline(object):
         if self.job_id is None:
             raise ValueError("Must set job_id to enable job logging.")
         mp.send_log_msg(self.rabbit, self.service_name, self.pipeline_name,
-                        self.job_id, msg)
+                        self.job_id, self.log_line_num, msg)
+        self.log_line_num += 1
 
     def get_targets(self, target_time):
         raise NotImplementedError
