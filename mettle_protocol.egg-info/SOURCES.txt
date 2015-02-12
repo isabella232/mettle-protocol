@@ -1,4 +1,8 @@
 mettle_protocol/__init__.py
+mettle_protocol/foo_service.py
+mettle_protocol/messages.py
+mettle_protocol/service.py
+mettle_protocol/settings.py
 mettle_protocol.egg-info/PKG-INFO
 mettle_protocol.egg-info/SOURCES.txt
 mettle_protocol.egg-info/dependency_links.txt

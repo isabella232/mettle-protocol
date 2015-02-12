@@ -167,7 +167,7 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                                                           data['run_id']))
             mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
                                 data['target_time'], data['run_id'],
-                                targets['present'], targets['absent'])
+                                targets)
         elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
             job_id = data['job_id']
             pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,

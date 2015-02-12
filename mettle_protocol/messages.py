@@ -49,19 +49,75 @@ def announce_pipeline_run(rabbit, service_name, pipeline_name, target_time,
         properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
     )
 
+def find_cycle(targets):
+    """
+    Given a dict representing a target dependency graph, return a list of any
+    nodes involved in a dependency cycle.  Returns the first cycle found.
+    """
+    # Thank you Guido
+    # http://neopythonic.blogspot.com/2009/01/detecting-cycles-in-directed-graph.html
+    todo = set(targets.keys())
+    while todo:
+      node = todo.pop()
+      stack = [node]
+      while stack:
+        top = stack[-1]
+        for node in targets[top]:
+          if node in stack:
+            return stack[stack.index(node):]
+          if node in todo:
+            stack.append(node)
+            todo.remove(node)
+            break
+        else:
+          node = stack.pop()
+    return None
+
+
+def validate_targets_graph(targets):
+    for k, v in targets.items():
+        # all keys are strings
+        assert isinstance(k, basestring), "%s is not a string" % k
+        # all values are lists
+        assert isinstance(v, list), "%s is not a list" % v
+        # each item in each value list is also a key in the dict
+        for dep in v:
+            assert dep in targets, "%s is not a target" % dep
+
+    # No cycles
+    cycle_nodes = find_cycle(targets)
+    if cycle_nodes:
+        raise AssertionError("Found cycle in target graph involving these targets:"
+                         ", ".join(cycle_nodes))
+
+
 
 def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
-                     targets_present, targets_absent):
+                     targets):
+    # targets should be a dictionary like this:
+    # targets = {
+    #   "file1.txt": [],
+    #   "file2.txt": [],
+    #   "file3.txt": [],
+    #   "manifest.txt": ["file1.txt", "file2.txt", "file3.txt"]
+    # }
+    # Where the key in each dict is a string representing the target to be made,
+    # and each value is a list of that target's dependencies.
+    # 
+    # Each depependency must itself be a target (key) in the dict, and cyclical
+    # dependencies are not allowed.
+
     logger.info("Acking pipeline run %s:%s:%s." % (service_name, pipeline_name,
                                                    run_id))
+
+    validate_targets_graph(targets)
 
     payload = {
         'service': service_name,
         'pipeline': pipeline_name,
         'run_id': run_id,
         'target_time': target_time,
-        'targets_present': targets_present,
-        'targets_absent': targets_absent,
+        'targets': targets,
     }
 
     rabbit.basic_publish(
