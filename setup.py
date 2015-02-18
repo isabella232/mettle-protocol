@@ -17,6 +17,7 @@ setup_params = dict(
         'isodate==0.5.0',
         'pika==0.9.14',
         'utc==0.0.3',
+        'yaml',
     ],
     description='A robust framework for scheduling and executing ETL jobs.',
 )
