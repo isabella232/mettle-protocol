@@ -4,7 +4,7 @@ import setuptools
 
 setup_params = dict(
     name='mettle_protocol',
-    version='0.0.2',
+    version='0.0.3',
     author='Y Team',
     author_email=', '.join([
         'alejandro.rivera@yougov.com',
@@ -17,7 +17,6 @@ setup_params = dict(
         'isodate==0.5.0',
         'pika==0.9.14',
         'utc==0.0.3',
-        'yaml',
     ],
     description='A robust framework for scheduling and executing ETL jobs.',
 )

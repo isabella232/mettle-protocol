@@ -3,6 +3,7 @@ import logging
 
 import pika
 
+
 # This module provides functions and constants to implement the core protocol
 # used by the timer, dispatcher, and ETL services.
 ANNOUNCE_PIPELINE_RUN_EXCHANGE = 'mettle_announce_pipeline_run'
@@ -15,6 +16,7 @@ PIKA_PERSISTENT_MODE = 2
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 def declare_exchanges(rabbit):
     for exchange in (ANNOUNCE_PIPELINE_RUN_EXCHANGE,
@@ -49,28 +51,30 @@ def announce_pipeline_run(rabbit, service_name, pipeline_name, target_time,
         properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
     )
 
+
 def find_cycle(targets):
     """
     Given a dict representing a target dependency graph, return a list of any
     nodes involved in a dependency cycle.  Returns the first cycle found.
     """
     # Thank you Guido
-    # http://neopythonic.blogspot.com/2009/01/detecting-cycles-in-directed-graph.html
+    # http://neopythonic.blogspot.com/2009/01/detecting-cycles-in-directed
+    # -graph.html
     todo = set(targets.keys())
     while todo:
-      node = todo.pop()
-      stack = [node]
-      while stack:
-        top = stack[-1]
-        for node in targets[top]:
-          if node in stack:
-            return stack[stack.index(node):]
-          if node in todo:
-            stack.append(node)
-            todo.remove(node)
-            break
-        else:
-          node = stack.pop()
+        node = todo.pop()
+        stack = [node]
+        while stack:
+            top = stack[-1]
+            for node in targets[top]:
+                if node in stack:
+                    return stack[stack.index(node):]
+                if node in todo:
+                    stack.append(node)
+                    todo.remove(node)
+                    break
+            else:
+                node = stack.pop()
     return None
 
 
@@ -87,23 +91,23 @@ def validate_targets_graph(targets):
     # No cycles
     cycle_nodes = find_cycle(targets)
     if cycle_nodes:
-        raise AssertionError("Found cycle in target graph involving these targets:"
-                         ", ".join(cycle_nodes))
-
+        raise AssertionError(
+            "Found cycle in target graph involving these targets:"
+            ", ".join(cycle_nodes))
 
 
 def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
                      targets):
     # targets should be a dictionary like this:
     # targets = {
-    #   "file1.txt": [],
+    # "file1.txt": [],
     #   "file2.txt": [],
     #   "file3.txt": [],
     #   "manifest.txt": ["file1.txt", "file2.txt", "file3.txt"]
     # }
     # Where the key in each dict is a string representing the target to be made,
     # and each value is a list of that target's dependencies.
-    # 
+    #
     # Each depependency must itself be a target (key) in the dict, and cyclical
     # dependencies are not allowed.
 
@@ -128,7 +132,8 @@ def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
     )
 
 
-def announce_job(rabbit, service_name, pipeline_name, target_time, target, job_id):
+def announce_job(rabbit, service_name, pipeline_name, target_time, target,
+                 job_id):
     # 'target' should be a string that includes all the information that the ETL
     # service worker will need to produce this output.  If it's a particular
     # slice of rows in a DB table, for example, then 'target' should include the
@@ -166,7 +171,7 @@ def claim_job(rabbit, job_id, worker_name, start_time, expires, corr_id):
         routing_key=worker_name,
         body=json.dumps(payload),
         properties=pika.BasicProperties(reply_to=worker_name,
-                                        correlation_id=corr_id,)
+                                        correlation_id=corr_id, )
     )
 
 
