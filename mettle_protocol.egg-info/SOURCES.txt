@@ -1,3 +1,4 @@
+setup.py
 mettle_protocol/__init__.py
 mettle_protocol/foo_service.py
 mettle_protocol/messages.py

@@ -25,12 +25,15 @@ class Pipeline(object):
 
     assignment_wait_secs = 30
 
-    def __init__(self, conn, chan, service_name, pipeline_name, job_id=None):
+    def __init__(self, conn, chan, service_name, pipeline_name, run_id=None,
+                 target=None, job_id=None):
         self.log_line_num = 0
         self.conn = conn
         self.chan = chan
         self.service_name = service_name
         self.pipeline_name = pipeline_name
+        self.run_id = run_id
+        self.target = target
         self.job_id = job_id
         self.queue = get_worker_name()
         self._claim_response = None
@@ -88,10 +91,15 @@ class Pipeline(object):
                            (self.corr_id, props.correlation_id))
 
     def log(self, msg):
-        if self.job_id is None:
+        if self.run_id is None:
+            raise ValueError("Must set run_id to enable job logging.")
+        elif self.target is None:
+            raise ValueError("Must set target to enable job logging.")
+        elif self.job_id is None:
             raise ValueError("Must set job_id to enable job logging.")
         mp.send_log_msg(self.chan, self.service_name, self.pipeline_name,
-                        self.job_id, self.log_line_num, msg)
+                        self.run_id, self.target, self.job_id, self.log_line_num,
+                        msg)
         self.log_line_num += 1
 
 
@@ -154,11 +162,11 @@ def run_pipelines(service_name, rabbit_url, pipelines):
         pipeline_name = data['pipeline']
         pipeline_cls = pipelines[pipeline_name]
         target_time = isodate.parse_datetime(data['target_time'])
-
-
+        run_id = data['run_id']
 
         if method.exchange == mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE:
-            pipeline = pipeline_cls(rabbit_conn, rabbit, service_name, pipeline_name)
+            pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
+                                    pipeline_name, run_id)
             # If it's a pipeline run announcement, then call get_targets and
             # publish result.
             targets = pipeline.get_targets(target_time)
@@ -166,12 +174,13 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                                                           data['pipeline'],
                                                           data['run_id']))
             mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
-                                data['target_time'], data['run_id'],
+                                data['target_time'], run_id,
                                 targets)
         elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
             job_id = data['job_id']
+            target = data['target']
             pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
-                                    pipeline_name, job_id)
+                                    pipeline_name, run_id, target, job_id)
             # If it's a job announcement, then publish ack, run job, then publish
             # completion.
             # publish ack
@@ -179,7 +188,7 @@ def run_pipelines(service_name, rabbit_url, pipelines):
 
             if claimed:
                 # WOOO!  Actually do some work here.
-                succeeded = pipeline.make_target(target_time, data['target'])
+                succeeded = pipeline.make_target(target_time, target)
 
                 mp.end_job(rabbit, service_name, data['pipeline'],
                            data['target_time'], data['target'],

@@ -30,6 +30,15 @@ def pipeline_routing_key(service_name, pipeline_name):
     return '.'.join([service_name, pipeline_name])
 
 
+def mq_escape(chars):
+    """
+    Given a string that you might want to use in a RabbitMQ routing key, replace
+    any dots, stars, or hashes with underscores, so it won't throw off Rabbit's
+    bindings.
+    """
+    return chars.replace('*', '_').replace('.', '_').replace('#', '_')
+
+
 def announce_pipeline_run(rabbit, service_name, pipeline_name, target_time,
                           run_id):
     payload = {
@@ -128,19 +137,21 @@ def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
     )
 
 
-def announce_job(rabbit, service_name, pipeline_name, target_time, target, job_id):
+def announce_job(rabbit, service_name, pipeline_name, target_time, target,
+                 run_id, job_id):
     # 'target' should be a string that includes all the information that the ETL
     # service worker will need to produce this output.  If it's a particular
     # slice of rows in a DB table, for example, then 'target' should include the
     # LIMIT and OFFSET parameters.
 
-    logger.info("Announcing job %s:%s:%s:%s." % (service_name, pipeline_name,
-                                                 target, job_id))
+    logger.info("Announcing job %s:%s:%s:%s:%s." % (service_name, pipeline_name,
+                                                    run_id, target, job_id))
     payload = {
         'service': service_name,
         'pipeline': pipeline_name,
         'target_time': target_time,
         'target': target,
+        'run_id': run_id,
         'job_id': job_id,
     }
     rabbit.exchange_declare(exchange=ANNOUNCE_JOB_EXCHANGE, type='topic',
@@ -208,19 +219,28 @@ def end_job(rabbit, service_name, pipeline_name, target_time, target, job_id,
     )
 
 
-def send_log_msg(rabbit, service_name, pipeline_name, job_id, line_num, msg):
-    logger.info("Job msg %s:%s:%s    %s" % (service_name, pipeline_name, job_id,
-                                            msg))
+def send_log_msg(rabbit, service_name, pipeline_name, run_id, target, job_id,
+                 line_num, msg):
+    logger.info("Job msg %s:%s:%s:%s:%s" % (service_name, pipeline_name, job_id,
+                                            run_id, msg))
+    routing_key = '.'.join([
+        service_name,
+        pipeline_name,
+        str(run_id),
+        mq_escape(target),
+        str(job_id),
+    ])
     payload = {
         'service': service_name,
         'pipeline': pipeline_name,
+        'run_id': run_id,
         'job_id': job_id,
         'line_num': line_num,
         'msg': msg,
     }
     rabbit.basic_publish(
         exchange=JOB_LOGS_EXCHANGE,
-        routing_key=pipeline_routing_key(service_name, pipeline_name),
+        routing_key=routing_key,
         body=json.dumps(payload),
         properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
     )
