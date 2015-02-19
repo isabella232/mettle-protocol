@@ -28,7 +28,7 @@ tmp/
 .env
 local_options.py
 node_modules
-mettle.egg-info/*
+mettle_protocol.egg-info/*
 bin
 lib
 include

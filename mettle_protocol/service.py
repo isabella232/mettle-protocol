@@ -8,21 +8,19 @@ import random
 import socket
 import string
 import uuid
-from datetime import timedelta
 
 import pika
 import isodate
 import utc
-
-from mettle_protocol.settings import get_settings
 import mettle_protocol.messages as mp
+
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-class Pipeline(object):
 
+class Pipeline(object):
     assignment_wait_secs = 30
 
     def __init__(self, conn, chan, service_name, pipeline_name, run_id=None,
@@ -51,8 +49,7 @@ class Pipeline(object):
         """
         self.corr_id = str(uuid.uuid4())
         logger.info('Claiming job %s.' % self.job_id)
-        result = self.chan.queue_declare(queue=self.queue, exclusive=True)
-        answer = {}
+        self.chan.queue_declare(queue=self.queue, exclusive=True)
 
         start_time = utc.now()
         expire_time = self.get_expire_time(target_time, target, start_time)
@@ -60,7 +57,8 @@ class Pipeline(object):
         consumer_tag = self.chan.basic_consume(self._on_claim_response,
                                                no_ack=True, queue=self.queue)
         try:
-            mp.claim_job(self.chan, self.job_id, self.queue, start_time.isoformat(),
+            mp.claim_job(self.chan, self.job_id, self.queue,
+                         start_time.isoformat(),
                          expire_time.isoformat(), self.corr_id)
 
             # Block while we wait for a response, as in the RabbitMQ RPC example
@@ -102,17 +100,20 @@ class Pipeline(object):
                         msg)
         self.log_line_num += 1
 
-
-    # Subclasses should implement these three methods.
     def get_targets(self, target_time):
+        """ Subclasses should implement this method.
+        """
         raise NotImplementedError
 
     def get_expire_time(self, target_time, target, start_time):
+        """ Subclasses should implement this method.
+        """
         raise NotImplementedError
 
     def make_target(self, target_time, target):
+        """ Subclasses should implement this method.
+        """
         raise NotImplementedError
-
 
 
 def get_worker_name():
@@ -122,11 +123,12 @@ def get_worker_name():
     """
     hostname = socket.getfqdn()
     pid = str(os.getpid())
-    random_bit = ''.join([random.choice(string.ascii_lowercase) for x in xrange(8)])
+    random_bit = ''.join(
+        [random.choice(string.ascii_lowercase) for x in xrange(8)])
     return '_'.join([
         hostname,
         pid,
-        #random_bit
+        random_bit
     ])
 
 
@@ -138,13 +140,11 @@ def run_pipelines(service_name, rabbit_url, pipelines):
     rabbit.basic_qos(prefetch_count=0)
     mp.declare_exchanges(rabbit)
 
-    worker_name = get_worker_name()
-
     # Declare the queue shared by all instances of this worker.
     shared_queue = 'etl_service_' + service_name
     rabbit.queue_declare(queue=shared_queue, exclusive=False, durable=True)
 
-    # als 
+    # als
     for name in pipelines:
         # For each pipeline we've been given, listen for both pipeline run
         # announcements and job announcements.
@@ -153,9 +153,6 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                           queue=shared_queue, routing_key=routing_key)
         rabbit.queue_bind(exchange=mp.ANNOUNCE_JOB_EXCHANGE,
                           queue=shared_queue, routing_key=routing_key)
-
-    waiting_for_job_id = None
-    waiting_for_job_until = utc.now() - timedelta(seconds=1)
 
     for method, properties, body in rabbit.consume(queue=shared_queue):
         data = json.loads(body)
