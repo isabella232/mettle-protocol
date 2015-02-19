@@ -3,7 +3,9 @@
 
 import json
 import logging
+import random
 import socket
+import string
 import uuid
 
 import os
@@ -113,12 +115,12 @@ def get_worker_name():
     """
     hostname = socket.getfqdn()
     pid = str(os.getpid())
-    # random_bit = ''.join(
-    #     [random.choice(string.ascii_lowercase) for x in xrange(8)])
+    random_bit = ''.join(
+        [random.choice(string.ascii_lowercase) for x in xrange(8)])
     return '_'.join([
         hostname,
         pid,
-        # random_bit
+        random_bit
     ])
 
 
