@@ -1,18 +1,19 @@
-# A dummy service that implements the mettle protocol for one pipeline, called
-# "bar".  The "bar" pipeline will make targets of "tmp/<target_time>/[0-9].txt".
-
 import json
 import logging
 import os
 import random
 import socket
 import string
+import time
 import uuid
 
 import pika
 import isodate
 import utc
 import mettle_protocol.messages as mp
+
+
+SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION = 5
 
 
 logging.basicConfig()
@@ -133,63 +134,85 @@ def get_worker_name():
 
 
 def run_pipelines(service_name, rabbit_url, pipelines):
-    # Expects 'pipelines' to be a dict of pipeline names and instances, where
-    # the key for each entry is a tuple of (service_name, pipeline_name)
-    rabbit_conn = pika.BlockingConnection(pika.URLParameters(rabbit_url))
-    rabbit = rabbit_conn.channel()
-    rabbit.basic_qos(prefetch_count=0)
-    mp.declare_exchanges(rabbit)
+    while True:
+        try:
+            # Expects 'pipelines' to be a dict of pipeline names and instances,
+            # where the key for each entry is a tuple of
+            # (service_name, pipeline_name)
+            rabbit_conn = pika.BlockingConnection(pika.URLParameters(rabbit_url))
+            rabbit = rabbit_conn.channel()
+            rabbit.basic_qos(prefetch_count=0)
+            mp.declare_exchanges(rabbit)
 
-    # Declare the queue shared by all instances of this worker.
-    shared_queue = 'etl_service_' + service_name
-    rabbit.queue_declare(queue=shared_queue, exclusive=False, durable=True)
+            # Declare the queue shared by all instances of this worker.
+            shared_queue = 'etl_service_' + service_name
+            rabbit.queue_declare(queue=shared_queue,
+                                 exclusive=False, durable=True)
 
-    # als
-    for name in pipelines:
-        # For each pipeline we've been given, listen for both pipeline run
-        # announcements and job announcements.
-        routing_key = mp.pipeline_routing_key(service_name, name)
-        rabbit.queue_bind(exchange=mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE,
-                          queue=shared_queue, routing_key=routing_key)
-        rabbit.queue_bind(exchange=mp.ANNOUNCE_JOB_EXCHANGE,
-                          queue=shared_queue, routing_key=routing_key)
+            for name in pipelines:
+                # For each pipeline we've been given, listen for both pipeline
+                # run announcements and job announcements.
+                routing_key = mp.pipeline_routing_key(service_name, name)
+                rabbit.queue_bind(exchange=mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE,
+                                  queue=shared_queue, routing_key=routing_key)
+                rabbit.queue_bind(exchange=mp.ANNOUNCE_JOB_EXCHANGE,
+                                  queue=shared_queue, routing_key=routing_key)
 
-    for method, properties, body in rabbit.consume(queue=shared_queue):
-        data = json.loads(body)
-        pipeline_name = data['pipeline']
-        pipeline_cls = pipelines[pipeline_name]
-        target_time = isodate.parse_datetime(data['target_time'])
-        run_id = data['run_id']
+            for method, properties, body in rabbit.consume(queue=shared_queue):
+                data = json.loads(body)
+                pipeline_name = data['pipeline']
+                pipeline_cls = pipelines[pipeline_name]
+                target_time = isodate.parse_datetime(data['target_time'])
+                run_id = data['run_id']
 
-        if method.exchange == mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE:
-            pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
-                                    pipeline_name, run_id)
-            # If it's a pipeline run announcement, then call get_targets and
-            # publish result.
-            targets = pipeline.get_targets(target_time)
-            logger.info("Acking pipeline run %s:%s:%s" % (service_name,
-                                                          data['pipeline'],
-                                                          data['run_id']))
-            mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
-                                data['target_time'], run_id,
-                                targets)
-        elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
-            job_id = data['job_id']
-            target = data['target']
-            pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
-                                    pipeline_name, run_id, target, job_id)
-            # If it's a job announcement, then publish ack, run job, then publish
-            # completion.
-            # publish ack
-            claimed = pipeline._claim_job(target_time, data['target'])
+                if method.exchange == mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE:
+                    pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
+                                            pipeline_name, run_id)
+                    # If it's a pipeline run announcement, then call get_targets
+                    # and publish result.
+                    targets = pipeline.get_targets(target_time)
+                    logger.info("Acking pipeline run %s:%s:%s" %
+                                (service_name, data['pipeline'], data['run_id']))
+                    mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
+                                        data['target_time'], run_id,
+                                        targets)
+                elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
+                    job_id = data['job_id']
+                    target = data['target']
+                    pipeline = pipeline_cls(rabbit_conn, rabbit, service_name,
+                                            pipeline_name, run_id, target,
+                                            job_id)
+                    # If it's a job announcement, then publish ack, run job,
+                    # then publish completion.
+                    # publish ack
+                    claimed = pipeline._claim_job(target_time, data['target'])
 
-            if claimed:
-                # WOOO!  Actually do some work here.
-                succeeded = pipeline.make_target(target_time, target)
+                    if claimed:
+                        # WOOO!  Actually do some work here.
+                        succeeded = pipeline.make_target(target_time, target)
 
-                mp.end_job(rabbit, service_name, data['pipeline'],
-                           data['target_time'], data['target'],
-                           job_id, utc.now().isoformat(), succeeded)
-            else:
-                logging.info('Failed to claim job %s.' % job_id)
-        rabbit.basic_ack(method.delivery_tag)
+                        mp.end_job(rabbit, service_name, data['pipeline'],
+                                   data['target_time'], data['target'],
+                                   job_id, utc.now().isoformat(), succeeded)
+                    else:
+                        logging.info('Failed to claim job %s.' % job_id)
+                rabbit.basic_ack(method.delivery_tag)
+
+            # After the 'consume' loop is done, perform .cancel() on the channel,
+            # as specified in:
+            # http://pika.readthedocs.org/en/latest/modules/adapters/blocking.html
+            rabbit.cancel()
+
+            # Close the channel and the connection.
+            rabbit.close()
+            rabbit_conn.close()
+
+        except (pika.exceptions.AMQPError, AttributeError) as e:
+            if isinstance(e, AttributeError) \
+               and str(e) != "'NoneType' object has no attribute 'sendall'":
+                raise
+
+            logger.exception('Unexpected RabbitMQ exception: %s.' % str(e))
+            logger.info('Connection will be retried in %s seconds!'
+                        % SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
+            time.sleep(SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
