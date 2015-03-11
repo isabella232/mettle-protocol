@@ -67,12 +67,9 @@ class RabbitChannel(object):
             def _callable(*args, **kwargs):
                 try:
                     return attr(*args, **kwargs)
-                except (pika.exceptions.AMQPError, AttributeError) as e:
+                except pika.exceptions.AMQPError:
                     # Argg! Most likely the connection was dropped. This
                     # usually happens for long-running procs.
-                    if isinstance(e, AttributeError) and \
-                       str(e) != "'NoneType' object has no attribute 'sendall'":
-                        raise
 
                     # Re-establish the connection.
                     self._establish_connection()
@@ -250,7 +247,11 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                         logging.info('Failed to claim job %s.' % job_id)
                 rabbit.basic_ack(method.delivery_tag)
 
-        except pika.exceptions.AMQPError as e:
+        except (pika.exceptions.AMQPError, AttributeError) as e:
+            if isinstance(e, AttributeError) and \
+               "'NoneType' object has no attribute 'sendall'" not in str(e):
+                raise
+
             logger.exception('Unexpected RabbitMQ exception: %s.' % str(e))
             logger.info('Connection will be re-established in %s seconds!'
                         % SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
