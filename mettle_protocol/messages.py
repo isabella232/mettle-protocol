@@ -6,8 +6,10 @@ import pika
 
 # This module provides functions and constants to implement the core protocol
 # used by the timer, dispatcher, and ETL services.
+ANNOUNCE_SERVICE_EXCHANGE = 'mettle_announce_service'
 ANNOUNCE_PIPELINE_RUN_EXCHANGE = 'mettle_announce_pipeline_run'
 ACK_PIPELINE_RUN_EXCHANGE = 'mettle_ack_pipeline_run'
+NACK_PIPELINE_RUN_EXCHANGE = 'mettle_nack_pipeline_run'
 ANNOUNCE_JOB_EXCHANGE = 'mettle_announce_job'
 CLAIM_JOB_EXCHANGE = 'mettle_claim_job'
 END_JOB_EXCHANGE = 'mettle_end_job'
@@ -19,8 +21,10 @@ logger.setLevel(logging.INFO)
 
 
 def declare_exchanges(rabbit):
-    for exchange in (ANNOUNCE_PIPELINE_RUN_EXCHANGE,
+    for exchange in (ANNOUNCE_SERVICE_EXCHANGE,
+                     ANNOUNCE_PIPELINE_RUN_EXCHANGE,
                      ACK_PIPELINE_RUN_EXCHANGE,
+                     NACK_PIPELINE_RUN_EXCHANGE,
                      ANNOUNCE_JOB_EXCHANGE,
                      CLAIM_JOB_EXCHANGE,
                      END_JOB_EXCHANGE,
@@ -39,6 +43,23 @@ def mq_escape(chars):
     bindings.
     """
     return chars.replace('*', '_').replace('.', '_').replace('#', '_')
+
+
+def announce_service(rabbit, service_name, pipeline_names):
+    payload = {
+        'service': service_name,
+        'pipeline_names': pipeline_names,
+    }
+    logger.info("Announcing service %s:%s." % (service_name,
+                                               ', '.join(pipeline_names)))
+
+    rabbit.basic_publish(
+        exchange=ANNOUNCE_SERVICE_EXCHANGE,
+        routing_key=service_name,
+        body=json.dumps(payload),
+        properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
+    )
+
 
 
 def announce_pipeline_run(rabbit, service_name, pipeline_name, target_time,
@@ -135,6 +156,30 @@ def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
 
     rabbit.basic_publish(
         exchange=ACK_PIPELINE_RUN_EXCHANGE,
+        routing_key=pipeline_routing_key(service_name, pipeline_name),
+        body=json.dumps(payload),
+        properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
+    )
+
+
+def nack_pipeline_run(rabbit, service_name, pipeline_name, run_id,
+                      reannounce_time, message):
+    # A service telling Mettle that it can't run a particular pipeline right
+    # now.  'retry' should be a boolean saying whether Mettle should bother
+    # re-announcing this run later.
+    logger.info("Nacking pipeline run %s:%s:%s." % (service_name, pipeline_name,
+                                                    run_id))
+
+    payload = {
+        'service': service_name,
+        'pipeline': pipeline_name,
+        'run_id': run_id,
+        'reannounce_time': reannounce_time,
+        'message': message,
+    }
+
+    rabbit.basic_publish(
+        exchange=NACK_PIPELINE_RUN_EXCHANGE,
         routing_key=pipeline_routing_key(service_name, pipeline_name),
         body=json.dumps(payload),
         properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)

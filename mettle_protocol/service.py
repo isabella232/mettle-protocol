@@ -1,6 +1,4 @@
-# A dummy service that implements the mettle protocol for one pipeline, called
-# "bar".  The "bar" pipeline will make targets of "tmp/<target_time>/[0-9].txt".
-
+from collections import defaultdict
 import json
 import logging
 import os
@@ -18,6 +16,24 @@ import mettle_protocol.messages as mp
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+class PipelineNack(Exception):
+    """
+    Services can raise this exception from the get_targets method to refuse to
+    run a pipeline.
+
+    You must provide a message explaining the reason for the nack (e.g. 'Stale
+    run', or 'Preconditions not met').
+
+    You may optionally provide a reannounce_time datetime (with UTC tzinfo).  If
+    you do, then the pipeline will be reannounced after that time.
+    """
+
+    def __init__(self, message, reannounce_time=None, **kwargs):
+        self.message = message
+        self.reannounce_time = reannounce_time
+        super(PipelineNack, self).__init__(message, **kwargs)
 
 
 class Pipeline(object):
@@ -133,16 +149,20 @@ def get_worker_name():
 
 
 def run_pipelines(service_name, rabbit_url, pipelines):
-    # Expects 'pipelines' to be a dict of pipeline names and instances, where
-    # the key for each entry is a tuple of (service_name, pipeline_name)
+    # Expects 'pipelines' to be a dict where the keys are pipeline names, and
+    # the values are Pipeline subclasses. 
     rabbit_conn = pika.BlockingConnection(pika.URLParameters(rabbit_url))
     rabbit = rabbit_conn.channel()
     rabbit.basic_qos(prefetch_count=0)
     mp.declare_exchanges(rabbit)
 
-    # Declare the queue shared by all instances of this worker.
+    # Declare the queue shared by all instances of this service.
     shared_queue = 'etl_service_' + service_name
     rabbit.queue_declare(queue=shared_queue, exclusive=False, durable=True)
+
+    # Announce the service.  The dispatcher will hear this message and record
+    # the service and pipeline names in the DB so they'll appear in the UI.
+    mp.announce_service(rabbit, service_name, pipelines.keys())
 
     # als
     for name in pipelines:
@@ -166,13 +186,21 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                                     pipeline_name, run_id)
             # If it's a pipeline run announcement, then call get_targets and
             # publish result.
-            targets = pipeline.get_targets(target_time)
-            logger.info("Acking pipeline run %s:%s:%s" % (service_name,
-                                                          data['pipeline'],
-                                                          data['run_id']))
-            mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
-                                data['target_time'], run_id,
-                                targets)
+            try:
+                targets = pipeline.get_targets(target_time)
+                logger.info("Acking pipeline run %s:%s:%s" % (service_name,
+                                                              data['pipeline'],
+                                                              data['run_id']))
+                mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
+                                    data['target_time'], run_id,
+                                    targets)
+            except PipelineNack as pn:
+                logger.info("Nacking pipeline run %s:%s:%s" % (service_name,
+                                                              data['pipeline'],
+                                                              data['run_id']))
+                mp.nack_pipeline_run(rabbit, service_name, data['pipeline'], run_id,
+                      pn.reannounce_time.isoformat(), pn.message)
+
         elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
             job_id = data['job_id']
             target = data['target']
