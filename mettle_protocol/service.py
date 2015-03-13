@@ -219,19 +219,24 @@ class Pipeline(object):
         return {}
 
 
+# Do this outside the function so it will be consistent across invocations.
+# Otherwise we make a ton of one-off queues when claiming jobs.
+random_worker_id = str(uuid.uuid4())
 def get_worker_name():
     """
     Returns a string name for this instance that should uniquely identify it
     across a datacenter.
     """
+    # NOTE the pid here is not really unique per machine.  If you're running in
+    # a container, then each container has an isolated PID namespace, so you
+    # could have a lot of processes on the host that think they're PID 1 or PID
+    # 2.
     hostname = socket.getfqdn()
     pid = str(os.getpid())
-    random_bit = ''.join(
-        [random.choice(string.ascii_lowercase) for x in xrange(8)])
     return '_'.join([
         hostname,
         pid,
-        random_bit
+        random_worker_id
     ])
 
 
