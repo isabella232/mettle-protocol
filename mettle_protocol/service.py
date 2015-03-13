@@ -48,11 +48,13 @@ class RabbitChannel(object):
     Pika connections.
     """
 
-    def __init__(self, rabbit_url, service_name, pipelines):
+    def __init__(self, rabbit_url, service_name, pipelines,
+                 queue_name):
         self.conn = None
         self.chan = None
         self.service_name = service_name
         self.pipelines = pipelines
+        self.queue_name = queue_name
         self._conn_parameters = pika.connection.URLParameters(rabbit_url)
         self._establish_connection()
 
@@ -68,18 +70,13 @@ class RabbitChannel(object):
         # the service and pipeline names in the DB so they'll appear in the UI.
         mp.announce_service(self.chan, self.service_name, self.pipelines.keys())
 
-
-        # Declare the queue shared by all instances of this worker.
-        shared_queue = 'etl_service_' + self.service_name
-        self.chan.queue_declare(queue=shared_queue,
+        self.chan.queue_declare(queue=self.queue_name,
                                 exclusive=False, durable=True)
 
         for name in self.pipelines:
             routing_key = mp.pipeline_routing_key(self.service_name, name)
             self.chan.queue_bind(exchange=mp.ANNOUNCE_PIPELINE_RUN_EXCHANGE,
-                                 queue=shared_queue, routing_key=routing_key)
-            self.chan.queue_bind(exchange=mp.ANNOUNCE_JOB_EXCHANGE,
-                                 queue=shared_queue, routing_key=routing_key)
+                                 queue=self.queue_name, routing_key=routing_key)
 
     def __getattr__(self, name):
         attr = getattr(self.chan, name)
@@ -198,10 +195,28 @@ class Pipeline(object):
         """
         raise NotImplementedError
 
-    def make_target(self, target_time, target):
+    def make_target(self, target_time, target, parameters=None):
         """ Subclasses should implement this method.
         """
         raise NotImplementedError
+
+    def get_target_parameters(self, target_time):
+        """
+        Return a dict where the keys are targets, and the values are
+        dictionaries of key/val pairs that will be used for routing job
+        announcements and passed in job announcement payloads.  Example:
+
+        {
+            "target1": {"foo": "bar", "baz": "quux"},
+            "target2": {"blah": "blerg"},
+        }
+
+        If a target needs no parameters, you may omit it.
+
+        If a pipeline needs no parameters for any of its targets, it need not
+        implement this method.
+        """
+        return {}
 
 
 def get_worker_name():
@@ -220,17 +235,18 @@ def get_worker_name():
     ])
 
 
-def run_pipelines(service_name, rabbit_url, pipelines):
+def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
     while True:
         try:
             # Expects 'pipelines' to be a dict of pipeline names (as keys) and
             # classes (as values),
-            rabbit = RabbitChannel(rabbit_url, service_name, pipelines)
 
-            # Define the name of the queue shared by all instances of this worker.
-            shared_queue = 'etl_service_' + service_name
+            queue_name = queue_name or mp.service_queue_name(service_name)
+            rabbit = RabbitChannel(rabbit_url, service_name, pipelines,
+                                   queue_name)
 
-            for method, properties, body in rabbit.consume(queue=shared_queue):
+
+            for method, properties, body in rabbit.consume(queue=queue_name):
                 data = json.loads(body)
                 pipeline_name = data['pipeline']
                 pipeline_cls = pipelines[pipeline_name]
@@ -244,19 +260,22 @@ def run_pipelines(service_name, rabbit_url, pipelines):
                     # and publish result.
                     try:
                         targets = pipeline.get_targets(target_time)
+                        target_params = pipeline.get_target_parameters(target_time)
                         logger.info("Acking pipeline run %s:%s:%s" % (service_name,
                                                                       data['pipeline'],
                                                                       data['run_id']))
                         mp.ack_pipeline_run(rabbit, service_name, data['pipeline'],
                                             data['target_time'], run_id,
-                                            targets)
+                                            targets, target_params)
                     except PipelineNack as pn:
                         logger.info("Nacking pipeline run %s:%s:%s" % (service_name,
                                                                       data['pipeline'],
                                                                       data['run_id']))
                         mp.nack_pipeline_run(rabbit, service_name, data['pipeline'], run_id,
                               pn.reannounce_time.isoformat(), pn.message)
-                elif method.exchange == mp.ANNOUNCE_JOB_EXCHANGE:
+                elif method.exchange == '' and method.routing_key == queue_name:
+                    # Job message published directly to our queue, not going
+                    # through an exchange.
                     job_id = data['job_id']
                     target = data['target']
                     pipeline = pipeline_cls(rabbit.conn, rabbit, service_name,
@@ -269,7 +288,8 @@ def run_pipelines(service_name, rabbit_url, pipelines):
 
                     if claimed:
                         # WOOO!  Actually do some work here.
-                        succeeded = pipeline.make_target(target_time, target)
+                        succeeded = pipeline.make_target(target_time, target,
+                                                         data['target_parameters'])
 
                         mp.end_job(rabbit, service_name, data['pipeline'],
                                    data['target_time'], data['target'],

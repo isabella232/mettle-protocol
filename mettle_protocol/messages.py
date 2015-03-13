@@ -10,7 +10,6 @@ ANNOUNCE_SERVICE_EXCHANGE = 'mettle_announce_service'
 ANNOUNCE_PIPELINE_RUN_EXCHANGE = 'mettle_announce_pipeline_run'
 ACK_PIPELINE_RUN_EXCHANGE = 'mettle_ack_pipeline_run'
 NACK_PIPELINE_RUN_EXCHANGE = 'mettle_nack_pipeline_run'
-ANNOUNCE_JOB_EXCHANGE = 'mettle_announce_job'
 CLAIM_JOB_EXCHANGE = 'mettle_claim_job'
 END_JOB_EXCHANGE = 'mettle_end_job'
 JOB_LOGS_EXCHANGE = 'mettle_job_logs'
@@ -25,7 +24,6 @@ def declare_exchanges(rabbit):
                      ANNOUNCE_PIPELINE_RUN_EXCHANGE,
                      ACK_PIPELINE_RUN_EXCHANGE,
                      NACK_PIPELINE_RUN_EXCHANGE,
-                     ANNOUNCE_JOB_EXCHANGE,
                      CLAIM_JOB_EXCHANGE,
                      END_JOB_EXCHANGE,
                      JOB_LOGS_EXCHANGE):
@@ -34,6 +32,10 @@ def declare_exchanges(rabbit):
 
 def pipeline_routing_key(service_name, pipeline_name):
     return '.'.join([service_name, pipeline_name])
+
+
+def service_queue_name(service_name):
+    return 'etl_service_' + service_name
 
 
 def mq_escape(chars):
@@ -127,7 +129,7 @@ def validate_targets_graph(targets):
 
 
 def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
-                     targets):
+                     targets, target_parameters):
     # targets should be a dictionary like this:
     # targets = {
     # "file1.txt": [],
@@ -152,6 +154,7 @@ def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
         'run_id': run_id,
         'target_time': target_time,
         'targets': targets,
+        'target_parameters': target_parameters,
     }
 
     rabbit.basic_publish(
@@ -186,8 +189,8 @@ def nack_pipeline_run(rabbit, service_name, pipeline_name, run_id,
     )
 
 
-def announce_job(rabbit, service_name, pipeline_name, target_time, target,
-                 run_id, job_id):
+def queue_job(rabbit, queue_name, service_name, pipeline_name, target_time, target,
+                 target_parameters, run_id, job_id):
     # 'target' should be a string that includes all the information that the ETL
     # service worker will need to produce this output.  If it's a particular
     # slice of rows in a DB table, for example, then 'target' should include the
@@ -200,16 +203,17 @@ def announce_job(rabbit, service_name, pipeline_name, target_time, target,
         'pipeline': pipeline_name,
         'target_time': target_time,
         'target': target,
+        'target_parameters': target_parameters,
         'run_id': run_id,
         'job_id': job_id,
     }
-    rabbit.exchange_declare(exchange=ANNOUNCE_JOB_EXCHANGE, type='topic',
-                            durable=True)
     rabbit.basic_publish(
-        exchange=ANNOUNCE_JOB_EXCHANGE,
-        routing_key=pipeline_routing_key(service_name, pipeline_name),
+        exchange='',
+        routing_key=queue_name,
         body=json.dumps(payload),
-        properties=pika.BasicProperties(delivery_mode=PIKA_PERSISTENT_MODE)
+        properties=pika.BasicProperties(
+            delivery_mode=PIKA_PERSISTENT_MODE,
+        ),
     )
 
 
