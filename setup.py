@@ -4,7 +4,7 @@ import setuptools
 
 setup_params = dict(
     name='mettle_protocol',
-    version='0.2.3',
+    version='1.0.0',
     author='Y Team',
     author_email=', '.join([
         'alejandro.rivera@yougov.com',
