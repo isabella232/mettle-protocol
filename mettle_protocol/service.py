@@ -88,7 +88,8 @@ class RabbitChannel(object):
             def _callable(*args, **kwargs):
                 try:
                     return attr(*args, **kwargs)
-                except pika.exceptions.AMQPError:
+                except pika.exceptions.AMQPError as e:
+                    logger.info("Pika Error: %s" % e)
                     # Argg! Most likely the connection was dropped. This
                     # usually happens for long-running procs.
 
@@ -300,7 +301,7 @@ def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
                                    data['target_time'], data['target'],
                                    job_id, utc.now().isoformat(), succeeded)
                     else:
-                        logging.info('Failed to claim job %s.' % job_id)
+                        logger.info('Failed to claim job %s.' % job_id)
                 rabbit.basic_ack(method.delivery_tag)
 
         except (pika.exceptions.AMQPError, AttributeError) as e:
