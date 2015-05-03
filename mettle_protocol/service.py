@@ -95,11 +95,15 @@ class RabbitChannel(object):
             def _callable(*args, **kwargs):
                 try:
                     return attr(*args, **kwargs)
-                except pika.exceptions.AMQPError as e:
+                except (pika.exceptions.AMQPError, AttributeError) as e:
+                    if isinstance(e, AttributeError) and \
+                       "'NoneType' object has no attribute 'sendall'" not in str(e):
+                        raise
+
                     # Argg! Most likely the connection was dropped. This
                     # usually happens for long-running procs.
 
-                    logger.info("Pika Error: %s" % e)
+                    logger.info('Pika Error: %s' % e)
 
                     # Clean up the (possibly dangling) conn and chan objects.
                     if self.chan:
