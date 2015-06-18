@@ -1,10 +1,7 @@
-from collections import defaultdict
 import json
 import logging
 import os
-import random
 import socket
-import string
 import time
 import uuid
 
@@ -79,30 +76,53 @@ class RabbitChannel(object):
                                  queue=self.queue_name, routing_key=routing_key)
 
     def __getattr__(self, name):
+        retry_methods = (
+            'basic_publish',
+            'basic_qos',
+            'exchange_declare',
+            'flow'
+        )
+
         attr = getattr(self.chan, name)
 
-        if callable(attr):
-            # This is a (Pika) channel callable object. Wrap it in a function
-            # that is able to recover from Pika exceptions by re-establishing
-            # the channel (and underlying connection).
+        if callable(attr) and attr in retry_methods:
+            # Wrap this method in a function that is able to recover from
+            # Pika exceptions by re-establishing the channel (and underlying
+            # connection).
             def _callable(*args, **kwargs):
                 try:
                     return attr(*args, **kwargs)
-                except pika.exceptions.AMQPError as e:
-                    logger.info("Pika Error: %s" % e)
+                except (pika.exceptions.AMQPError, AttributeError) as e:
+                    if isinstance(e, AttributeError) and \
+                       "'NoneType' object has no attribute 'sendall'" not in str(e):
+                        raise
+
                     # Argg! Most likely the connection was dropped. This
                     # usually happens for long-running procs.
+
+                    logger.info('Pika Error: %s' % e)
+
+                    # Clean up the (possibly dangling) conn and chan objects.
+                    if self.chan:
+                        try:
+                            self.chan.close()
+                        except pika.exceptions.ChannelClosed:
+                            pass
+                    if self.conn:
+                        try:
+                            self.conn.close()
+                        except pika.exceptions.ConnectionClosed:
+                            pass
 
                     # Re-establish the connection.
                     self._establish_connection()
 
-                    # Now, try the callable again. This time it should work fine.
+                    # Now, try the method again. This time it should work fine.
                     __callable = getattr(self.chan, name)
                     return __callable(*args, **kwargs)
 
             return _callable
 
-        # Normal attribute.
         return attr
 
 
@@ -250,7 +270,6 @@ def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
             queue_name = queue_name or mp.service_queue_name(service_name)
             rabbit = RabbitChannel(rabbit_url, service_name, pipelines,
                                    queue_name)
-
 
             for method, properties, body in rabbit.consume(queue=queue_name):
                 data = json.loads(body)
