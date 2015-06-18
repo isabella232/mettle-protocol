@@ -167,9 +167,6 @@ def ack_pipeline_run(rabbit, service_name, pipeline_name, target_time, run_id,
 
 def nack_pipeline_run(rabbit, service_name, pipeline_name, run_id,
                       reannounce_time, message):
-    # A service telling Mettle that it can't run a particular pipeline right
-    # now.  'retry' should be a boolean saying whether Mettle should bother
-    # re-announcing this run later.
     logger.info("Nacking pipeline run %s:%s:%s." % (service_name, pipeline_name,
                                                     run_id))
 

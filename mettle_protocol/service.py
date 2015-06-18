@@ -277,8 +277,11 @@ def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
                         logger.info("Nacking pipeline run %s:%s:%s" % (service_name,
                                                                       data['pipeline'],
                                                                       data['run_id']))
+                        reannounce_time = None
+                        if pn.reannounce_time:
+                            reannounce_time = pn.reannounce_time.isoformat()
                         mp.nack_pipeline_run(rabbit, service_name, data['pipeline'], run_id,
-                              pn.reannounce_time.isoformat(), pn.message)
+                              reannounce_time, pn.message)
                 elif method.exchange == '' and method.routing_key == queue_name:
                     # Job message published directly to our queue, not going
                     # through an exchange.
