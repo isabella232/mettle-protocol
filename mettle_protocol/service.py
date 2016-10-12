@@ -180,7 +180,7 @@ class Pipeline(object):
                                    self.job_id)
                     return False
 
-            granted = self._claim_response == '1'
+            granted = self._claim_response == u'1'
             if granted:
                 logger.info('Claimed job %s.' % self.job_id)
             else:
