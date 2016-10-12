@@ -65,7 +65,9 @@ class RabbitChannel(object):
 
         # Announce the service.  The dispatcher will hear this message and record
         # the service and pipeline names in the DB so they'll appear in the UI.
-        mp.announce_service(self.chan, self.service_name, self.pipelines.keys())
+        mp.announce_service(self.chan,
+                            self.service_name,
+                            list(self.pipelines.keys()))
 
         self.chan.queue_declare(queue=self.queue_name,
                                 exclusive=False, durable=True)
@@ -189,7 +191,7 @@ class Pipeline(object):
 
     def _on_claim_response(self, ch, method, props, body):
         if props.correlation_id == self.corr_id:
-            self._claim_response = body
+            self._claim_response = body.decode('utf-8')
         else:
             logger.warning('corr_id mismatch.  mine: %s\nreceived: %s' %
                            (self.corr_id, props.correlation_id))
@@ -272,7 +274,7 @@ def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
                                    queue_name)
 
             for method, properties, body in rabbit.consume(queue=queue_name):
-                data = json.loads(body)
+                data = json.loads(body.decode('utf-8'))
                 pipeline_name = data['pipeline']
                 pipeline_cls = pipelines[pipeline_name]
                 target_time = isodate.parse_datetime(data['target_time'])
