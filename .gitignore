@@ -33,3 +33,4 @@ lib
 include
 local
 foo/*
+.idea/
