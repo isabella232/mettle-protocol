@@ -15,7 +15,7 @@ setup_params = dict(
     include_package_data=True,
     install_requires=[
         'isodate==0.5.0',
-        'pika>=0.9.14',
+        'pika>=0.9.14,<=0.10.0',
         'utc==0.0.3',
         'future'
     ],
