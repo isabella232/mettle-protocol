@@ -69,8 +69,26 @@ class RabbitChannel(object):
                             self.service_name,
                             list(self.pipelines.keys()))
 
-        self.chan.queue_declare(queue=self.queue_name,
-                                exclusive=False, durable=True)
+        kwargs = {}
+
+        if 'METTLE_X_MESSAGE_TTL' in os.environ:
+            try:
+                kwargs['arguments'] = {
+                    'x-message-ttl': int(os.getenv('METTLE_X_MESSAGE_TTL'))
+                }
+            except ValueError as e:
+                logger.warning(
+                    ('Ignoring METTLE_X_MESSAGE_TTL because of invalid '
+                     'int value: %s'),
+                    os.getenv('METTLE_X_MESSAGE_TTL')
+                )
+
+        self.chan.queue_declare(
+            queue=self.queue_name,
+            exclusive=False,
+            durable=True,
+            **kwargs
+        )
 
         for name in self.pipelines:
             routing_key = mp.pipeline_routing_key(self.service_name, name)
