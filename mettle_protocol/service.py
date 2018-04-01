@@ -347,11 +347,14 @@ def run_pipelines(service_name, rabbit_url, pipelines, queue_name=None):
                 rabbit.basic_ack(method.delivery_tag)
 
         except (pika.exceptions.AMQPError, AttributeError) as e:
-            if isinstance(e, AttributeError) and \
-               "'NoneType' object has no attribute 'sendall'" not in str(e):
-                raise
+            if isinstance(e, AttributeError) and (
+                "'NoneType' object has no attribute 'sendall'" in str(e) or
+                "'NoneType' object has no attribute 'send'" in str(e)
+            ):
 
-            logger.exception('Unexpected RabbitMQ exception: %s.' % str(e))
-            logger.info('Connection will be re-established in %s seconds!'
-                        % SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
-            time.sleep(SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
+                logger.exception('Unexpected RabbitMQ exception: %s.' % str(e))
+                logger.info('Connection will be re-established in %s seconds!'
+                            % SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
+                time.sleep(SLEEP_INTERVAL_ON_RABBITMQ_EXCEPTION)
+            else:
+                raise
